@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bible Viewer</title>
+<link rel="icon" type="image/png" href="bible.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="toolbar">
+  <label class="field">
+    <span>Translation</span>
+    <select id="translation" title="Translation (Alt+T)"></select>
+  </label>
+  <label class="field">
+    <span>Book</span>
+    <select id="book" title="Book (Ctrl+B)"></select>
+  </label>
+  <label class="field">
+    <span>Chapter</span>
+    <select id="chapter" title="Chapter (Ctrl+K)"></select>
+  </label>
+  <label class="field grow">
+    <span>Lookup</span>
+    <input id="lookup" type="text" autocomplete="off" spellcheck="false"
+           placeholder="e.g. 1cor 13:4-7, or 1cor 1:1 t:all" title="Lookup (Ctrl+L)">
+  </label>
+  <label class="field grow">
+    <span>Search</span>
+    <input id="search" type="search" autocomplete="off" spellcheck="false"
+           placeholder="Search verse text... e.g. love b:john t:all" title="Search (Ctrl+S)">
+  </label>
+  <div class="actions">
+    <button id="help" type="button" title="Keyboard shortcuts">?</button>
+    <button id="quit" type="button" title="Stop the viewer (Alt+Q)">Quit</button>
+  </div>
+</header>
+
+<main id="text" tabindex="0" aria-live="polite"></main>
+
+<div id="closed" class="closed" hidden>
+  <div class="closed-box">
+    <img src="bible.png" alt="" width="48" height="48">
+    <h1>The viewer has stopped</h1>
+    <p>Run <code>bible gui</code> to start it again. You can close this tab.</p>
+  </div>
+</div>
+
+<dialog id="shortcuts">
+  <h2>Keyboard shortcuts</h2>
+  <table>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Lookup</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Search</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>T</kbd></td><td>Translation</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Book</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Chapter</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>Text view</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>Q</kbd></td><td>Quit</td></tr>
+  </table>
+  <p class="note">On a Mac, <kbd>Cmd</kbd> works in place of <kbd>Ctrl</kbd>.</p>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
