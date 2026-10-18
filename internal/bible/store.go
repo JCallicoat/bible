@@ -295,9 +295,8 @@ func (s *Store) ResolveBook(table, input string) (string, string, error) {
 	}
 }
 
-// normalizeBook removes spaces and lowercases ASCII letters, mirroring the
-// LOWER(REPLACE(book, " ", "")) LIKE comparison of the Python version
-// (SQLite's LOWER and LIKE only fold ASCII case).
+// normalizeBook removes spaces and lowercases ASCII letters, like SQLite's
+// LOWER(REPLACE(book, " ", "")) (LOWER only folds ASCII case).
 func normalizeBook(s string) string {
 	var b strings.Builder
 	for _, r := range s {

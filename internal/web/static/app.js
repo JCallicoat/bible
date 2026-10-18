@@ -1,8 +1,7 @@
 "use strict";
 
 // Browser side of "bible gui". The server does all parsing and resolution;
-// this file keeps the dropdowns in sync and renders results, following the
-// behaviour of the original Qt viewer.
+// this file keeps the dropdowns in sync and renders results.
 
 const $ = (id) => document.getElementById(id);
 const tSel = $("translation");

@@ -1,9 +1,9 @@
 # bible
 
 Read Bible translations from the command line or in a browser-based viewer.
-This is a Go port of the Python `bible-cli`, built as a single
-self-contained binary with the translations database embedded in it: no
-Python, no Qt, no files to install alongside it.
+It is a single self-contained binary with the translations database
+embedded in it: no runtime, no libraries and no files to install alongside
+it.
 
 ```
 bible matt 5:3                    # print a verse
@@ -63,9 +63,8 @@ bible [options] [book [chapter[:verse[-verse]]] [filters...]]
 With no arguments it prints Genesis 1. Books can be abbreviated to any
 unambiguous prefix (`1cor`, `song`, `philem`). Lookups and searches accept
 `t:<translation>` / `t:all` filters, and searches also accept `b:<book>`.
-Options can appear anywhere on the line (`bible matt 5:3 -t kjv`). Output,
-messages and exit codes match the Python version, except that lookups are
-grouped into paragraphs when the database has paragraph data (see
+Options can appear anywhere on the line (`bible matt 5:3 -t kjv`). Lookups
+are grouped into paragraphs when the database has paragraph data (see
 [Paragraphs](#paragraphs)). Each paragraph is one line that starts with the
 reference of its first verse, with later verses numbered inline:
 
@@ -101,9 +100,10 @@ variable is set to a non-empty value.
 ## Viewer
 
 `bible gui` starts a small web server on 127.0.0.1 (on a free port) and
-opens the viewer in your default browser. It works like the Qt window:
-translation, book and chapter dropdowns, a lookup box, a search box and the
-text view. Searches are case-sensitive regular expressions, like the
+opens the viewer in your default browser. It has translation, book and
+chapter dropdowns, a lookup box, a search box and the text view. After a
+lookup with `t:<translation>`, the dropdowns switch to that translation and
+its books. Searches are case-sensitive regular expressions, like the
 command line; uncheck **Regex** to search for the literal text, and check
 **Ignore case** to ignore case.
 
@@ -185,21 +185,11 @@ load them. These options control the breaks:
 make paragraphs EMBED_FLAGS="--embed-cache /tmp/kjv.emb --avg-verses 8"
 ```
 
-## Differences from the Python version
-
-- `%` and `_` in book names match literally; Python treated them as SQL
-  wildcards.
-- Searches use regular expressions and are case-sensitive by default;
-  Python matched the text literally, ignoring ASCII case. `-f` and `-i`
-  restore that behaviour.
-- After a lookup with `t:<translation>`, the book dropdown now lists that
-  translation's books; the Qt version kept the previous translation's list.
-- The database location is no longer a command-line argument. A hidden
-  `--db PATH` option (on both `bible` and `bible gui`) reads a database
-  file instead of the embedded copy, for trying a new `bible.db` without
-  rebuilding.
-
 ## Development
+
+A hidden `--db PATH` option (on both `bible` and `bible gui`) reads a
+database file instead of the embedded copy, for trying a new `bible.db`
+without rebuilding.
 
 Layout:
 

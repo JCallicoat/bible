@@ -25,8 +25,7 @@ var CanonicalBooks = []string{
 }
 
 // SuggestBooks returns up to three canonical book names close to input,
-// best first, matching Python's
-// difflib.get_close_matches(input.title(), BOOKS, n=3, cutoff=0.6).
+// best first: those with a similarity ratio of at least 0.6 to input.
 func SuggestBooks(input string) []string {
 	return closeMatches(titleCase(input), CanonicalBooks, 3, 0.6)
 }

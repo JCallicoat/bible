@@ -125,7 +125,7 @@ func (s *server) handleChapter(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, Result{Rows: toRows(vs)})
 }
 
-// handleLookup mirrors the Qt GUI's reference lookup.
+// handleLookup looks up a reference typed in the lookup box.
 func (s *server) handleLookup(w http.ResponseWriter, r *http.Request) {
 	current, ok := s.table(w, r)
 	if !ok {
@@ -192,7 +192,7 @@ func (s *server) lookup(current, raw string) (Result, error) {
 	return res, nil
 }
 
-// handleSearch mirrors the Qt GUI's search.
+// handleSearch runs a search typed in the search box.
 func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	current, ok := s.table(w, r)
 	if !ok {
