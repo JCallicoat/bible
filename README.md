@@ -73,6 +73,11 @@ Genesis 1:1 When God began to create the heavens and the earth, (2) the earth wa
 `-L` (or `--lines`) prints one verse per line instead, as does a database
 without paragraph data. Search results are always one verse per line.
 
+Translation names, references and verse numbers are printed in bold, as are
+matches of the search text in search results. Bold is used only when
+output goes to a terminal, and never when the `NO_COLOR` environment
+variable is set to a non-empty value.
+
 ## Viewer
 
 `bible gui` starts a small web server on 127.0.0.1 (on a free port) and

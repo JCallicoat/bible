@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/pflag"
@@ -18,6 +19,7 @@ type runner struct {
 	stdout io.Writer
 	stderr io.Writer
 	lines  bool // one verse per line instead of paragraphs
+	color  bool // emit ANSI bold escapes
 }
 
 // Main runs the CLI with args (without the program name) and returns the
@@ -55,13 +57,13 @@ func Main(args []string, stdout, stderr io.Writer, open bible.Opener) int {
 	defer store.Close()
 	out := bufio.NewWriter(stdout)
 	defer out.Flush()
-	r := &runner{store: store, stdout: out, stderr: stderr, lines: *lines}
+	r := &runner{store: store, stdout: out, stderr: stderr, lines: *lines, color: useColor(stdout)}
 	stdout = out
 
 	if *list {
 		fmt.Fprint(stdout, "Available translations:\n\n")
 		for _, t := range store.Translations() {
-			fmt.Fprintln(stdout, strings.ToUpper(t))
+			fmt.Fprintln(stdout, r.bold(strings.ToUpper(t)))
 		}
 		return 0
 	}
@@ -176,9 +178,9 @@ func (r *runner) lookup(base []string, raw string) int {
 	}
 	multi := len(tables) > 1
 	if !multi {
-		fmt.Fprintf(r.stdout, "%s\n\n", strings.ToUpper(tables[0]))
+		fmt.Fprintf(r.stdout, "%s\n\n", r.bold(strings.ToUpper(tables[0])))
 	}
-	r.printRows(rows, multi)
+	r.printRows(rows, multi, "")
 	return 0
 }
 
@@ -203,12 +205,12 @@ func (r *runner) search(base []string, raw string) int {
 	r.errors(msgs)
 
 	multi := len(tables) > 1
-	header := "Search results for \"" + term + "\""
+	header := "Search results for \"" + r.bold(term) + "\""
 	if f.Book != "" {
-		header += " in " + f.Book
+		header += " in " + r.bold(f.Book)
 	}
 	if !multi {
-		header += " - " + strings.ToUpper(tables[0])
+		header += " - " + r.bold(strings.ToUpper(tables[0]))
 	}
 	fmt.Fprintf(r.stdout, "%s\n\n", header)
 
@@ -216,19 +218,20 @@ func (r *runner) search(base []string, raw string) int {
 		fmt.Fprint(r.stdout, "No results found.\n\n")
 		return 0
 	}
-	r.printRows(rows, multi)
+	r.printRows(rows, multi, term)
 	fmt.Fprintln(r.stdout)
 	return 0
 }
 
 // printRows prints one paragraph per line: the first verse with its full
 // reference and any continuing verses (see bible.Store.MarkParagraphs)
-// after it as "(N) text".
-func (r *runner) printRows(rows []bible.Verse, multi bool) {
+// after it as "(N) text". Translation names, references and verse numbers
+// are bold, as are any case-insensitive matches of term in the text.
+func (r *runner) printRows(rows []bible.Verse, multi bool, term string) {
 	last := ""
 	for i, v := range rows {
 		if v.Cont {
-			fmt.Fprintf(r.stdout, " (%d) %s", v.Verse, v.Text)
+			fmt.Fprintf(r.stdout, " (%s) %s", r.bold(fmt.Sprint(v.Verse)), r.highlight(v.Text, term))
 			continue
 		}
 		if i > 0 {
@@ -242,11 +245,71 @@ func (r *runner) printRows(rows []bible.Verse, multi bool) {
 		}
 		prefix := ""
 		if multi {
-			prefix = strings.ToUpper(v.Translation) + " "
+			prefix = r.bold(strings.ToUpper(v.Translation)) + " "
 		}
-		fmt.Fprintf(r.stdout, "%s%s %d:%d %s", prefix, v.Book, v.Chapter, v.Verse, v.Text)
+		ref := r.bold(fmt.Sprintf("%s %d:%d", v.Book, v.Chapter, v.Verse))
+		fmt.Fprintf(r.stdout, "%s%s %s", prefix, ref, r.highlight(v.Text, term))
 	}
 	if len(rows) > 0 {
 		fmt.Fprintln(r.stdout)
 	}
+}
+
+const (
+	ansiBold  = "\x1b[1m"
+	ansiReset = "\x1b[0m"
+)
+
+// useColor reports whether stdout is a terminal and NO_COLOR
+// (https://no-color.org) is unset or empty.
+func useColor(stdout io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	f, ok := stdout.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+func (r *runner) bold(s string) string {
+	if !r.color {
+		return s
+	}
+	return ansiBold + s + ansiReset
+}
+
+// highlight bolds every occurrence of term in text, matching ASCII
+// case-insensitively like the LIKE query in bible.Store.Search.
+func (r *runner) highlight(text, term string) string {
+	if term == "" || !r.color {
+		return text
+	}
+	lowerText, lowerTerm := asciiLower(text), asciiLower(term)
+	var b strings.Builder
+	for {
+		i := strings.Index(lowerText, lowerTerm)
+		if i < 0 {
+			break
+		}
+		end := i + len(term)
+		b.WriteString(text[:i])
+		b.WriteString(r.bold(text[i:end]))
+		text, lowerText = text[end:], lowerText[end:]
+	}
+	b.WriteString(text)
+	return b.String()
+}
+
+// asciiLower lowercases only A-Z, so byte offsets stay aligned with s.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }
