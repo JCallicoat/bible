@@ -1,7 +1,10 @@
 package bible
 
 import (
-	"sort"
+	"cmp"
+	"slices"
+	"strings"
+	"unicode"
 )
 
 // CanonicalBooks is the canonical book order/names. It's only used for
@@ -30,56 +33,67 @@ func SuggestBooks(input string) []string {
 	return closeMatches(titleCase(input), CanonicalBooks, 3, 0.6)
 }
 
+// titleCase uppercases a cased character when it follows an uncased one
+// and lowercases it otherwise, so "1cor" becomes "1Cor".
+func titleCase(s string) string {
+	var b strings.Builder
+	prevCased := false
+	for _, r := range s {
+		cased := unicode.IsUpper(r) || unicode.IsLower(r) || unicode.IsTitle(r)
+		if cased {
+			if prevCased {
+				r = unicode.ToLower(r)
+			} else {
+				r = unicode.ToTitle(r)
+			}
+		}
+		prevCased = cased
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// closeMatches returns up to n of possibilities whose similarity ratio to
+// word is at least cutoff, best first, like difflib.get_close_matches.
 func closeMatches(word string, possibilities []string, n int, cutoff float64) []string {
 	type scored struct {
 		score float64
 		s     string
 	}
-	b := []rune(word)
-	m := newMatcher(b)
+	m := newMatcher([]rune(word))
 	var res []scored
 	for _, p := range possibilities {
 		if r := m.ratio([]rune(p)); r >= cutoff {
 			res = append(res, scored{r, p})
 		}
 	}
-	// heapq.nlargest on (score, string) tuples: ties go to the larger string.
-	sort.Slice(res, func(i, j int) bool {
-		if res[i].score != res[j].score {
-			return res[i].score > res[j].score
+	// Ties go to the alphabetically later name, as in difflib.
+	slices.SortFunc(res, func(x, y scored) int {
+		if c := cmp.Compare(y.score, x.score); c != 0 {
+			return c
 		}
-		return res[i].s > res[j].s
+		return strings.Compare(y.s, x.s)
 	})
-	var out []string
-	for i := 0; i < len(res) && i < n; i++ {
-		out = append(out, res[i].s)
+	out := make([]string, 0, min(n, len(res)))
+	for _, r := range res[:min(n, len(res))] {
+		out = append(out, r.s)
 	}
 	return out
 }
 
-// matcher is a port of the parts of difflib.SequenceMatcher (isjunk=None,
-// autojunk=True) needed for ratio(), with b as the fixed second sequence.
+// matcher is a port of the parts of difflib.SequenceMatcher (isjunk=None)
+// needed for ratio(), with b as the fixed second sequence. difflib's
+// autojunk heuristic only applies to sequences of 200 or more elements, so
+// it is left out: book names are never that long.
 type matcher struct {
-	b       []rune
-	b2j     map[rune][]int
-	popular map[rune]bool
+	b   []rune
+	b2j map[rune][]int
 }
 
 func newMatcher(b []rune) *matcher {
-	m := &matcher{b: b, b2j: map[rune][]int{}, popular: map[rune]bool{}}
+	m := &matcher{b: b, b2j: map[rune][]int{}}
 	for i, r := range b {
 		m.b2j[r] = append(m.b2j[r], i)
-	}
-	if n := len(b); n >= 200 {
-		ntest := n/100 + 1
-		for r, idx := range m.b2j {
-			if len(idx) > ntest {
-				m.popular[r] = true
-			}
-		}
-		for r := range m.popular {
-			delete(m.b2j, r)
-		}
 	}
 	return m
 }

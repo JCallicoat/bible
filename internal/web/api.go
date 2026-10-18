@@ -46,16 +46,23 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func toRows(vs []bible.Verse) []Row {
+// toRows converts verses to rows. With a highlighter (see
+// bible.Highlighter), each row carries the segments of its text instead of
+// the text itself.
+func toRows(vs []bible.Verse, hl func(string) []bible.Segment) []Row {
 	rows := make([]Row, len(vs))
 	for i, v := range vs {
 		rows[i] = Row{Translation: v.Translation, Book: v.Book, Chapter: v.Chapter,
-			Verse: v.Verse, Text: v.Text, Cont: v.Cont}
+			Verse: v.Verse, Cont: v.Cont}
+		if hl != nil {
+			rows[i].Segments = hl(v.Text)
+		} else {
+			rows[i].Text = v.Text
+		}
 	}
 	return rows
 }
 
-// table validates the "t" query parameter against the translation list.
 // paragraphs groups vs into paragraphs unless the viewer was started
 // with -L.
 func (s *server) paragraphs(vs []bible.Verse) error {
@@ -65,15 +72,15 @@ func (s *server) paragraphs(vs []bible.Verse) error {
 	return s.store.MarkParagraphs(vs)
 }
 
+// table validates the "t" query parameter against the translation list,
+// replying with an error if it isn't one.
 func (s *server) table(w http.ResponseWriter, r *http.Request) (string, bool) {
 	t := r.URL.Query().Get("t")
-	for _, name := range s.store.Translations() {
-		if name == t {
-			return t, true
-		}
+	if !s.store.HasTranslation(t) {
+		http.Error(w, fmt.Sprintf("unknown translation %q", t), http.StatusBadRequest)
+		return "", false
 	}
-	http.Error(w, fmt.Sprintf("unknown translation %q", t), http.StatusBadRequest)
-	return "", false
+	return t, true
 }
 
 func (s *server) handleTranslations(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +129,7 @@ func (s *server) handleChapter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, Result{Rows: toRows(vs)})
+	writeJSON(w, Result{Rows: toRows(vs, nil)})
 }
 
 // handleLookup looks up a reference typed in the lookup box.
@@ -140,19 +147,7 @@ func (s *server) handleLookup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) lookup(current, raw string) (Result, error) {
-	raw = bible.NormalizeDashes(strings.TrimSpace(raw))
-	f := bible.ExtractFilters(raw)
-
-	ref, ok := bible.ParseReference(f.Remainder)
-	if !ok {
-		return Result{Message: fmt.Sprintf("Could not parse reference “%s”.", raw)}, nil
-	}
-	bookInput := f.Book
-	if bookInput == "" {
-		bookInput = ref.Book
-	}
-
-	tables, msg := s.store.TablesFor([]string{current}, f)
+	q, msg := s.store.ParseLookup([]string{current}, raw)
 	if msg != "" {
 		return Result{Message: msg}, nil
 	}
@@ -161,33 +156,33 @@ func (s *server) lookup(current, raw string) (Result, error) {
 	// can follow even if the verse range has no matches. t:all leaves the
 	// dropdowns alone.
 	var sync *Sync
-	if !f.TranslationAll {
-		book, msg, err := s.store.ResolveBook(tables[0], bookInput)
+	if !q.All {
+		book, msg, err := s.store.ResolveBook(q.Tables[0], q.Book)
 		if err != nil {
 			return Result{}, err
 		}
 		if msg != "" {
 			return Result{Message: msg}, nil
 		}
-		sync = &Sync{Translation: tables[0], Book: book, Chapter: ref.Chapter}
-		bookInput = book
+		sync = &Sync{Translation: q.Tables[0], Book: book, Chapter: q.Ref.Chapter}
+		q.Book = book
 	}
 
-	vs, msgs, err := s.store.Lookup(tables, bookInput, ref)
+	vs, msg, err := s.store.Lookup(q)
 	if err == nil {
 		err = s.paragraphs(vs)
 	}
 	if err != nil {
 		return Result{}, err
 	}
-	res := Result{Rows: toRows(vs), Multi: f.TranslationAll, Sync: sync}
+	if msg != "" {
+		return Result{Message: msg, Sync: sync}, nil
+	}
+	res := Result{Rows: toRows(vs, nil), Multi: q.All, Sync: sync}
 	if len(vs) == 0 {
-		if len(msgs) > 0 {
-			res.Message = msgs[0]
-		} else {
-			ref.Book = bookInput
-			res.Message = "No verses found for " + ref.String()
-		}
+		ref := q.Ref
+		ref.Book = q.Book
+		res.Message = "No verses found for " + ref.String() + "."
 	}
 	return res, nil
 }
@@ -210,40 +205,28 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // search runs a regular expression search, or a literal one if fixed is
 // set, ignoring case if ignoreCase is set (the CLI's -f and -i).
 func (s *server) search(current, raw string, fixed, ignoreCase bool) (Result, error) {
-	f := bible.ExtractFilters(strings.TrimSpace(raw))
-	term := f.Remainder
-	if term == "" {
-		return Result{Message: "Enter search text in addition to the filter(s)."}, nil
-	}
-	re, err := bible.SearchPattern(term, fixed, ignoreCase)
-	if err != nil {
-		return Result{Message: err.Error() + "."}, nil
-	}
-	tables, msg := s.store.TablesFor([]string{current}, f)
+	q, msg := s.store.ParseSearch([]string{current}, raw)
 	if msg != "" {
 		return Result{Message: msg}, nil
 	}
+	re, err := bible.SearchPattern(q.Term, fixed, ignoreCase)
+	if err != nil {
+		return Result{Message: "Error: " + err.Error() + "."}, nil
+	}
 
-	vs, msgs, err := s.store.Search(tables, re, f.Book)
+	vs, msg, err := s.store.Search(q, re)
 	if err != nil {
 		return Result{}, err
 	}
+	if msg != "" {
+		return Result{Message: msg}, nil
+	}
 	if len(vs) == 0 {
-		if len(msgs) > 0 {
-			return Result{Message: msgs[0]}, nil
-		}
-		desc := "“" + term + "”"
-		if f.Book != "" {
-			desc += " in " + f.Book
+		desc := "“" + q.Term + "”"
+		if q.Book != "" {
+			desc += " in " + q.Book
 		}
 		return Result{Message: "No results for " + desc + "."}, nil
 	}
-
-	hl := bible.Highlighter(re)
-	rows := make([]Row, len(vs))
-	for i, v := range vs {
-		rows[i] = Row{Translation: v.Translation, Book: v.Book, Chapter: v.Chapter,
-			Verse: v.Verse, Segments: hl(v.Text)}
-	}
-	return Result{Rows: rows, Multi: f.TranslationAll}, nil
+	return Result{Rows: toRows(vs, bible.Highlighter(re)), Multi: q.All}, nil
 }

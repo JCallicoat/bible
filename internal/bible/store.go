@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 
@@ -21,7 +22,8 @@ import (
 // DefaultTranslation is the translation used when none is requested.
 const DefaultTranslation = "nrsvue"
 
-var requiredColumns = []string{"book", "chapter", "verse", "text"}
+// requiredColumns are the columns a table needs to count as a translation.
+var requiredColumns = []string{"book", "book_id", "chapter", "verse", "text"}
 
 // Book is one book of a translation, with its chapter numbers in order.
 type Book struct {
@@ -38,10 +40,18 @@ type Store struct {
 
 	hasParagraphs bool
 
+	// The caches are filled lazily. mu guards the maps only, not the queries
+	// that fill them, so a slow query doesn't block other tables; two
+	// requests racing to fill the same entry just store equal values.
 	mu         sync.Mutex
-	books      map[string][]Book    // keyed by table name, filled lazily
-	bookNames  map[string][]string  // keyed by table name, filled lazily
-	paragraphs map[chapterKey][]int // paragraph starts, filled lazily
+	books      map[string][]Book     // keyed by table name
+	bookNames  map[string][]bookName // keyed by table name
+	paragraphs map[chapterKey][]int  // paragraph starts
+}
+
+// bookName is a book name along with its normalizeBook form.
+type bookName struct {
+	name, key string
 }
 
 // Opener opens the Bible database: the embedded copy when path is "",
@@ -73,18 +83,28 @@ func OpenFile(path string) (*Store, error) {
 }
 
 func newStore(db *sql.DB) (*Store, error) {
-	s := &Store{db: db, books: map[string][]Book{}, bookNames: map[string][]string{},
+	s := &Store{db: db, books: map[string][]Book{}, bookNames: map[string][]bookName{},
 		paragraphs: map[chapterKey][]int{}}
-	t, err := s.loadTranslations()
-	if err == nil {
-		s.hasParagraphs, err = s.loadHasParagraphs()
-	}
-	if err != nil {
+	if err := s.load(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("reading database: %w", err)
+		return nil, err
 	}
-	s.translations = t
 	return s, nil
+}
+
+func (s *Store) load() error {
+	var err error
+	if s.translations, err = s.tablesWithColumns(requiredColumns...); err != nil {
+		return fmt.Errorf("reading database: %w", err)
+	}
+	if len(s.translations) == 0 {
+		return fmt.Errorf("no tables with %s columns were found in the database",
+			strings.Join(requiredColumns, "/"))
+	}
+	if s.hasParagraphs, err = s.loadHasParagraphs(); err != nil {
+		return fmt.Errorf("reading database: %w", err)
+	}
+	return nil
 }
 
 // Close releases the database.
@@ -95,84 +115,61 @@ func QuoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-func (s *Store) loadTranslations() ([]string, error) {
+// tablesWithColumns returns the tables that have all of cols, alphabetically.
+func (s *Store) tablesWithColumns(cols ...string) ([]string, error) {
+	args := make([]any, 0, len(cols)+1)
+	for _, c := range cols {
+		args = append(args, c)
+	}
+	args = append(args, len(cols))
 	rows, err := s.db.Query(
-		"SELECT name FROM sqlite_master " +
-			"WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+		"SELECT m.name FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p "+
+			"WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' "+
+			"AND p.name IN (?"+strings.Repeat(", ?", len(cols)-1)+") "+
+			"GROUP BY m.name HAVING COUNT(*) = ? ORDER BY m.name", args...)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	var tables []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			rows.Close()
 			return nil, err
 		}
 		tables = append(tables, name)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	var valid []string
-	for _, t := range tables {
-		cols := map[string]bool{}
-		crows, err := s.db.Query("SELECT name FROM pragma_table_info(?)", t)
-		if err != nil {
-			return nil, err
-		}
-		for crows.Next() {
-			var c string
-			if err := crows.Scan(&c); err != nil {
-				crows.Close()
-				return nil, err
-			}
-			cols[c] = true
-		}
-		crows.Close()
-		ok := true
-		for _, c := range requiredColumns {
-			if !cols[c] {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			valid = append(valid, t)
-		}
-	}
-	return valid, nil
+	return tables, rows.Err()
 }
 
 // Translations returns the tables that look like translations (they have
-// book/chapter/verse/text columns), alphabetically, as stored in the
-// database (typically lowercase).
+// all of requiredColumns), alphabetically, as stored in the database
+// (typically lowercase). There is always at least one.
 func (s *Store) Translations() []string {
-	return append([]string(nil), s.translations...)
+	return slices.Clone(s.translations)
+}
+
+// HasTranslation reports whether table is one of the translations, exactly
+// as returned by Translations.
+func (s *Store) HasTranslation(table string) bool {
+	return slices.Contains(s.translations, table)
 }
 
 // DefaultTranslation returns DefaultTranslation if the database has it,
-// otherwise the first translation (or "" if there are none).
+// otherwise the first translation.
 func (s *Store) DefaultTranslation() string {
-	for _, t := range s.translations {
-		if t == DefaultTranslation {
-			return t
-		}
+	if s.HasTranslation(DefaultTranslation) {
+		return DefaultTranslation
 	}
-	if len(s.translations) > 0 {
-		return s.translations[0]
-	}
-	return ""
+	return s.translations[0]
 }
 
 // ResolveTranslation matches name case-insensitively against the
 // translation list. It returns the table name, or an error message.
 func (s *Store) ResolveTranslation(name string) (string, string) {
-	normalized := strings.ToLower(strings.TrimSpace(name))
+	trimmed := strings.TrimSpace(name)
 	for _, t := range s.translations {
-		if strings.ToLower(t) == normalized {
+		if strings.EqualFold(t, trimmed) {
 			return t, ""
 		}
 	}
@@ -183,8 +180,9 @@ func (s *Store) ResolveTranslation(name string) (string, string) {
 // with its chapters in order. The result is cached and must not be modified.
 func (s *Store) Books(table string) ([]Book, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if b, ok := s.books[table]; ok {
+	b, ok := s.books[table]
+	s.mu.Unlock()
+	if ok {
 		return b, nil
 	}
 
@@ -214,37 +212,50 @@ func (s *Store) Books(table string) ([]Book, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
 	s.books[table] = books
+	s.mu.Unlock()
 	return books, nil
 }
 
 // bookList returns just the book names of table in canonical order. It is
 // cheaper than Books, which also collects every chapter number.
-func (s *Store) bookList(table string) ([]string, error) {
+func (s *Store) bookList(table string) ([]bookName, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if b, ok := s.bookNames[table]; ok {
-		return b, nil
-	}
-	if b, ok := s.books[table]; ok {
-		names := make([]string, len(b))
-		for i := range b {
-			names[i] = b[i].Name
-		}
-		s.bookNames[table] = names
+	names, ok := s.bookNames[table]
+	books, haveBooks := s.books[table]
+	s.mu.Unlock()
+	if ok {
 		return names, nil
 	}
-	// Walk the distinct book_ids with one index seek each (the
-	// (book_id, chapter, verse) index makes this far cheaper than a GROUP
-	// BY scan of the whole table). The first time a name appears is its
-	// lowest book_id, which gives the canonical order.
+	if haveBooks {
+		for _, b := range books {
+			names = append(names, bookName{b.Name, normalizeBook(b.Name)})
+		}
+	} else {
+		var err error
+		if names, err = s.queryBookList(table); err != nil {
+			return nil, err
+		}
+	}
+	s.mu.Lock()
+	s.bookNames[table] = names
+	s.mu.Unlock()
+	return names, nil
+}
+
+// queryBookList walks the distinct book_ids of table with one index seek
+// each (the (book_id, chapter, verse) index makes this far cheaper than a
+// GROUP BY scan of the whole table). The first time a name appears is its
+// lowest book_id, which gives the canonical order.
+func (s *Store) queryBookList(table string) ([]bookName, error) {
 	stmt, err := s.db.Prepare("SELECT book_id, book FROM " + QuoteIdent(table) +
 		" WHERE book_id > ? ORDER BY book_id LIMIT 1")
 	if err != nil {
 		return nil, err
 	}
 	defer stmt.Close()
-	var names []string
+	var names []bookName
 	seen := map[string]bool{}
 	var last int64 = -1 << 62
 	for {
@@ -259,19 +270,19 @@ func (s *Store) bookList(table string) ([]string, error) {
 		}
 		if !seen[name] {
 			seen[name] = true
-			names = append(names, name)
+			names = append(names, bookName{name, normalizeBook(name)})
 		}
 		last = id
 	}
-	s.bookNames[table] = names
 	return names, nil
 }
 
 // ResolveBook resolves a possibly-abbreviated book name against table's
 // books. The input (lowercased, spaces removed) must be a prefix of the
 // book name normalized the same way, e.g. "1cor" matches "1 Corinthians".
-// It returns the book name, or an error message if there is no match or
-// more than one.
+// A book whose whole name matches wins over books it is a prefix of, so a
+// resolved name always resolves to itself. It returns the book name, or an
+// error message if there is no match or more than one.
 func (s *Store) ResolveBook(table, input string) (string, string, error) {
 	books, err := s.bookList(table)
 	if err != nil {
@@ -280,8 +291,11 @@ func (s *Store) ResolveBook(table, input string) (string, string, error) {
 	prefix := normalizeBook(strings.ToLower(input))
 	var matches []string
 	for _, b := range books {
-		if strings.HasPrefix(normalizeBook(b), prefix) {
-			matches = append(matches, b)
+		if b.key == prefix {
+			return b.name, "", nil
+		}
+		if strings.HasPrefix(b.key, prefix) {
+			matches = append(matches, b.name)
 		}
 	}
 	switch len(matches) {
@@ -290,7 +304,7 @@ func (s *Store) ResolveBook(table, input string) (string, string, error) {
 	case 1:
 		return matches[0], "", nil
 	default:
-		return "", fmt.Sprintf("“%s” is ambiguous, matches: %s",
+		return "", fmt.Sprintf("“%s” is ambiguous, matches: %s.",
 			input, strings.Join(matches, ", ")), nil
 	}
 }

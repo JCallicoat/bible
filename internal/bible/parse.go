@@ -4,7 +4,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 // Filters holds the "b:<book>" and "t:<translation>" tokens pulled out of
@@ -33,7 +32,7 @@ func ExtractFilters(raw string) Filters {
 				f.Book = tok[2:]
 				continue
 			case 't', 'T':
-				if strings.ToLower(tok[2:]) == "all" {
+				if strings.EqualFold(tok[2:], "all") {
 					f.TranslationAll = true
 				} else {
 					f.Translation = tok[2:]
@@ -68,7 +67,7 @@ var referenceRE = regexp.MustCompile(
 // It returns false if ref doesn't have that shape.
 func ParseReference(ref string) (Reference, bool) {
 	m := referenceRE.FindStringSubmatch(ref)
-	if m == nil || m[1] == "" {
+	if m == nil || strings.TrimSpace(m[1]) == "" {
 		return Reference{}, false
 	}
 	r := Reference{Book: strings.TrimSpace(m[1]), Chapter: 1}
@@ -106,10 +105,12 @@ func (r Reference) String() string {
 	return s
 }
 
+var dashReplacer = strings.NewReplacer("–", "-", "—", "-")
+
 // NormalizeDashes replaces en and em dashes with hyphens so pasted verse
 // ranges like "13:4–7" parse.
 func NormalizeDashes(s string) string {
-	return strings.NewReplacer("–", "-", "—", "-").Replace(s)
+	return dashReplacer.Replace(s)
 }
 
 // Segment is a run of verse text, marked if it matched the search term.
@@ -139,25 +140,4 @@ func Highlighter(re *regexp.Regexp) func(text string) []Segment {
 		}
 		return segs
 	}
-}
-
-// titleCase mimics Python's str.title(): a cased character is uppercased
-// when it follows an uncased one and lowercased otherwise, so "1cor"
-// becomes "1Cor".
-func titleCase(s string) string {
-	var b strings.Builder
-	prevCased := false
-	for _, r := range s {
-		cased := unicode.IsUpper(r) || unicode.IsLower(r) || unicode.IsTitle(r)
-		if cased {
-			if prevCased {
-				r = unicode.ToLower(r)
-			} else {
-				r = unicode.ToTitle(r)
-			}
-		}
-		prevCased = cased
-		b.WriteRune(r)
-	}
-	return b.String()
 }

@@ -86,10 +86,6 @@ func Main(args []string, stderr io.Writer, open bible.Opener) int {
 		return 1
 	}
 	defer store.Close()
-	if len(store.Translations()) == 0 {
-		fmt.Fprintln(stderr, "Error: no tables with book/chapter/verse/text columns were found in the database.")
-		return 1
-	}
 
 	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(*port)))
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -79,50 +80,58 @@ func Main(args []string, stdout, stderr io.Writer, open bible.Opener) int {
 	}
 	r := &runner{store: store, stdout: w, stderr: stderr, lines: *lines, color: useColor(stdout),
 		fixed: *fixed, ignoreCase: *ignoreCase}
-	stdout = w
 
 	if *list {
-		fmt.Fprint(stdout, "Available translations:\n\n")
+		fmt.Fprint(r.stdout, "Available translations:\n\n")
 		for _, t := range store.Translations() {
-			fmt.Fprintln(stdout, r.bold(strings.ToUpper(t)))
+			fmt.Fprintln(r.stdout, r.bold(strings.ToUpper(t)))
 		}
 		return 0
 	}
 
-	var base []string
-	if strings.ToLower(strings.TrimSpace(*translation)) == "all" {
-		base = store.Translations()
-	} else {
-		var msgs []string
-		for _, name := range strings.Split(*translation, ",") {
-			t, msg := store.ResolveTranslation(name)
-			if msg != "" {
-				msgs = append(msgs, msg)
-			} else {
-				base = append(base, t)
-			}
-		}
-		if len(msgs) > 0 {
-			r.errors(msgs)
-			return 1
-		}
+	base, ok := r.translations(*translation, fs.Changed("translation"))
+	if !ok {
+		return 1
 	}
 
 	if *search != "" {
 		return r.search(base, *search)
 	}
 
-	// Positionals are "book [chapter_verse [filters...]]", defaulting to
-	// Genesis 1, and are joined back together so unquoted multi-word books
-	// ("song of solomon 2:1") work.
+	// Positionals are "book [chapter[:verse[-verse]]] [filters...]",
+	// defaulting to Genesis 1 (ParseReference defaults the chapter), and
+	// are joined back together so unquoted multi-word books ("song of
+	// solomon 2:1") work.
 	pos := fs.Args()
-	switch len(pos) {
-	case 0:
+	if len(pos) == 0 {
 		pos = []string{"Genesis", "1"}
-	case 1:
-		pos = append(pos, "1")
 	}
 	return r.lookup(base, strings.Join(pos, " "))
+}
+
+// translations resolves the -t flag: a comma-separated list of names or
+// "all". When the flag wasn't given, it is the store's default translation
+// (DefaultTranslation, or the first one if the database lacks it). It
+// reports every unknown name and returns false if there are any.
+func (r *runner) translations(spec string, given bool) ([]string, bool) {
+	if !given {
+		return []string{r.store.DefaultTranslation()}, true
+	}
+	if strings.EqualFold(strings.TrimSpace(spec), "all") {
+		return r.store.Translations(), true
+	}
+	var base []string
+	ok := true
+	for _, name := range strings.Split(spec, ",") {
+		t, msg := r.store.ResolveTranslation(name)
+		if msg != "" {
+			r.fail(msg)
+			ok = false
+			continue
+		}
+		base = append(base, t)
+	}
+	return base, ok
 }
 
 const usageHeader = `Usage: bible [options] [book [chapter[:verse[-verse]]] [filters...]]
@@ -144,100 +153,70 @@ const usageFooter = `
 A lookup can include a t:<translation> or t:all filter, e.g. "1cor 1:1 t:all".
 `
 
-func (r *runner) errors(msgs []string) {
-	for _, m := range msgs {
-		fmt.Fprintf(r.stderr, "Error: %s\n", m)
-	}
-}
-
-func (r *runner) fail(err error) int {
-	fmt.Fprintf(r.stderr, "Error: %v\n", err)
+// fail prints msg as an error and returns the exit code for it.
+func (r *runner) fail(msg string) int {
+	fmt.Fprintf(r.stderr, "Error: %s\n", msg)
 	return 1
 }
 
 func (r *runner) lookup(base []string, raw string) int {
-	raw = bible.NormalizeDashes(raw)
-	f := bible.ExtractFilters(raw)
-
-	tables, msg := r.store.TablesFor(base, f)
+	q, msg := r.store.ParseLookup(base, raw)
 	if msg != "" {
-		r.errors([]string{msg})
-		return 1
+		return r.fail(msg)
 	}
-
-	ref, ok := bible.ParseReference(f.Remainder)
-	if !ok {
-		r.errors([]string{fmt.Sprintf("could not parse reference “%s”", raw)})
-		return 1
-	}
-	bookInput := f.Book
-	if bookInput == "" {
-		bookInput = ref.Book
-	}
-
-	rows, msgs, err := r.store.Lookup(tables, bookInput, ref)
+	rows, msg, err := r.store.Lookup(q)
 	if err != nil {
-		return r.fail(err)
+		return r.fail(err.Error())
 	}
-	r.errors(msgs)
-
-	if len(rows) == 0 {
-		if len(msgs) > 0 {
-			if s := bible.SuggestBooks(bookInput); len(s) > 0 {
-				fmt.Fprintf(r.stderr, "Did you mean: %s?\n", strings.Join(s, ", "))
-			}
-			return 1
+	if msg != "" {
+		r.fail(msg)
+		if s := bible.SuggestBooks(q.Book); len(s) > 0 {
+			fmt.Fprintf(r.stderr, "Did you mean: %s?\n", strings.Join(s, ", "))
 		}
+		return 1
+	}
+	if len(rows) == 0 {
 		fmt.Fprintln(r.stdout, "No matching verses found.")
 		return 0
 	}
 
 	if !r.lines {
 		if err := r.store.MarkParagraphs(rows); err != nil {
-			return r.fail(err)
+			return r.fail(err.Error())
 		}
 	}
-	multi := len(tables) > 1
+	multi := len(q.Tables) > 1
 	if !multi {
-		fmt.Fprintf(r.stdout, "%s\n\n", r.bold(strings.ToUpper(tables[0])))
+		fmt.Fprintf(r.stdout, "%s\n\n", r.bold(strings.ToUpper(q.Tables[0])))
 	}
 	r.printRows(rows, multi, nil)
 	return 0
 }
 
 func (r *runner) search(base []string, raw string) int {
-	f := bible.ExtractFilters(raw)
-	term := f.Remainder
-	if term == "" {
-		r.errors([]string{"no search text provided (only filters)."})
-		return 1
-	}
-
-	re, err := bible.SearchPattern(term, r.fixed, r.ignoreCase)
-	if err != nil {
-		fmt.Fprintf(r.stderr, "Error: %v (use -f to search for the literal text)\n", err)
-		return 1
-	}
-
-	tables, msg := r.store.TablesFor(base, f)
+	q, msg := r.store.ParseSearch(base, raw)
 	if msg != "" {
-		r.errors([]string{msg})
-		return 1
+		return r.fail(msg)
 	}
-
-	rows, msgs, err := r.store.Search(tables, re, f.Book)
+	re, err := bible.SearchPattern(q.Term, r.fixed, r.ignoreCase)
 	if err != nil {
-		return r.fail(err)
+		return r.fail(err.Error() + " (use -f to search for the literal text)")
 	}
-	r.errors(msgs)
+	rows, msg, err := r.store.Search(q, re)
+	if err != nil {
+		return r.fail(err.Error())
+	}
+	if msg != "" {
+		return r.fail(msg)
+	}
 
-	multi := len(tables) > 1
-	header := "Search results for \"" + r.bold(term) + "\""
-	if f.Book != "" {
-		header += " in " + r.bold(f.Book)
+	multi := len(q.Tables) > 1
+	header := "Search results for \"" + r.bold(q.Term) + "\""
+	if q.Book != "" {
+		header += " in " + r.bold(q.Book)
 	}
 	if !multi {
-		header += " - " + r.bold(strings.ToUpper(tables[0]))
+		header += " - " + r.bold(strings.ToUpper(q.Tables[0]))
 	}
 	fmt.Fprintf(r.stdout, "%s\n\n", header)
 
@@ -256,18 +235,16 @@ func (r *runner) search(base []string, raw string) int {
 // are bold, as are any matches of re (if not nil) in the text.
 func (r *runner) printRows(rows []bible.Verse, multi bool, re *regexp.Regexp) {
 	hl := r.highlighter(re)
-	last := ""
 	for i, v := range rows {
 		if v.Cont {
-			fmt.Fprintf(r.stdout, " (%s) %s", r.bold(fmt.Sprint(v.Verse)), hl(v.Text))
+			fmt.Fprintf(r.stdout, " (%s) %s", r.bold(strconv.Itoa(v.Verse)), hl(v.Text))
 			continue
 		}
 		if i > 0 {
+			// End the previous paragraph, plus a blank line between
+			// translations.
 			fmt.Fprintln(r.stdout)
-		}
-		if v.Translation != last {
-			last = v.Translation
-			if i > 0 {
+			if v.Translation != rows[i-1].Translation {
 				fmt.Fprintln(r.stdout)
 			}
 		}

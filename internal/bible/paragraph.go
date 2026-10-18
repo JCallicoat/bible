@@ -3,6 +3,7 @@ package bible
 import (
 	"database/sql"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -31,17 +32,14 @@ type chapterKey struct {
 }
 
 func (s *Store) loadHasParagraphs() (bool, error) {
-	var n int
-	err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name IN ('book', 'chapter', 'starts')",
-		ParagraphTable).Scan(&n)
-	return n == 3, err
+	tables, err := s.tablesWithColumns("book", "chapter", "starts")
+	return slices.Contains(tables, ParagraphTable), err
 }
 
 // HasParagraphs reports whether the database has paragraph data.
 func (s *Store) HasParagraphs() bool { return s.hasParagraphs }
 
-// paragraphStarts returns the sorted paragraph-start verses of a chapter,
+// paragraphStarts returns the paragraph-start verses of a chapter, sorted,
 // or nil if the chapter has no paragraph data.
 func (s *Store) paragraphStarts(book string, chapter int) ([]int, error) {
 	key := chapterKey{strings.ToLower(book), chapter}
@@ -65,6 +63,7 @@ func (s *Store) paragraphStarts(book string, chapter int) ([]int, error) {
 		}
 		starts = append(starts, n)
 	}
+	slices.Sort(starts)
 	s.mu.Lock()
 	s.paragraphs[key] = starts
 	s.mu.Unlock()
@@ -98,14 +97,9 @@ func (s *Store) MarkParagraphs(vs []Verse) error {
 		if starts == nil {
 			continue
 		}
-		prev := vs[i-1].Verse
-		v.Cont = true
-		for _, st := range starts {
-			if st > prev && st <= v.Verse {
-				v.Cont = false
-				break
-			}
-		}
+		// Find the first start after the previous verse.
+		j, _ := slices.BinarySearch(starts, vs[i-1].Verse+1)
+		v.Cont = j == len(starts) || starts[j] > v.Verse
 	}
 	return nil
 }

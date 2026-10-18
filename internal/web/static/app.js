@@ -71,7 +71,8 @@ function showError(err) {
 
 function appendText(p, row) {
   if (!row.segments) {
-    p.append(row.text);
+    // An empty text is left out of the JSON.
+    p.append(row.text ?? "");
     return;
   }
   for (const seg of row.segments) {

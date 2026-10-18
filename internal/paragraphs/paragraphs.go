@@ -121,19 +121,13 @@ func run(path string, o options, stderr io.Writer) error {
 		return err
 	}
 
-	total := 0
-	for i := range chapters {
-		c := &chapters[i]
-		c.starts = []int{0}
-		total += len(c.verses)
-	}
 	split(chapters, vecs, o)
 	paras := 0
 	for _, c := range chapters {
 		paras += len(c.starts)
 	}
 	fmt.Fprintf(stderr, "%d verses in %d chapters split into %d paragraphs (%.1f verses each)\n",
-		total, len(chapters), paras, float64(total)/float64(paras))
+		len(texts), len(chapters), paras, float64(len(texts))/float64(paras))
 
 	if err := write(db, chapters); err != nil {
 		return err
@@ -465,14 +459,14 @@ type gap struct {
 	depth float64
 }
 
-// split fills in each chapter's starts (indexes into its verses, always
-// beginning with 0).
+// split sets each chapter's starts (indexes into its verses, always
+// beginning with 0). vecs holds one embedding per verse, in order.
 func split(chapters []chapter, vecs [][]float32, o options) {
-	total := 0
 	var cands []gap
 	allDepths := make([][]float64, len(chapters))
-	for ci, c := range chapters {
-		total += len(c.verses)
+	for ci := range chapters {
+		c := &chapters[ci]
+		c.starts = []int{0}
 		d := depths(vecs[c.first:c.first+len(c.verses)], o.window)
 		allDepths[ci] = d
 		for g, v := range d {
@@ -483,7 +477,7 @@ func split(chapters []chapter, vecs [][]float32, o options) {
 	}
 	slices.SortStableFunc(cands, func(a, b gap) int { return cmp.Compare(b.depth, a.depth) })
 
-	want := int(math.Round(float64(total)/o.avg)) - len(chapters)
+	want := int(math.Round(float64(len(vecs))/o.avg)) - len(chapters)
 	for _, g := range cands {
 		if want <= 0 {
 			break
