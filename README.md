@@ -191,6 +191,11 @@ A hidden `--db PATH` option (on both `bible` and `bible gui`) reads a
 database file instead of the embedded copy, for trying a new `bible.db`
 without rebuilding.
 
+`make test` runs the tests with the race detector (which needs cgo and a C
+compiler). They run against a small synthetic database built from
+`internal/testdb/testdb.sql`, so they don't need `data/bible.db`; plain
+`go test ./internal/...` works too.
+
 Layout:
 
 ```
@@ -201,4 +206,5 @@ internal/cli/           command-line interface
 internal/web/           viewer: HTTP API, auto-shutdown, browser launch
 internal/web/static/    the page (HTML/CSS/JS), embedded
 internal/paragraphs/    embed-paragraphs: builds the paragraphs table from embeddings
+internal/testdb/        synthetic database for tests
 ```

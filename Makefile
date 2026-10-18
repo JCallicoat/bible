@@ -11,10 +11,15 @@ EMBED_FLAGS   ?=
 
 export CGO_ENABLED := 0
 
-.PHONY: build build-paragraphs paragraphs release clean
+.PHONY: build build-paragraphs paragraphs test release clean
 
 build: data/bible.db
 	go build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) .
+
+# Tests use a synthetic database (internal/testdb), not data/bible.db.
+# The race detector needs cgo, so it is enabled just for this target.
+test:
+	CGO_ENABLED=1 go test -race ./internal/...
 
 release: data/bible.db
 	@mkdir -p dist
