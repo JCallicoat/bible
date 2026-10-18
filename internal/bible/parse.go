@@ -119,16 +119,15 @@ type Segment struct {
 }
 
 // Highlighter returns a function that splits text into segments, marking
-// case-insensitive occurrences of term.
-func Highlighter(term string) func(text string) []Segment {
-	if term == "" {
-		return func(text string) []Segment { return []Segment{{Text: text}} }
-	}
-	re := regexp.MustCompile("(?i)" + regexp.QuoteMeta(term))
+// matches of re (see SearchPattern). Empty matches aren't marked.
+func Highlighter(re *regexp.Regexp) func(text string) []Segment {
 	return func(text string) []Segment {
 		var segs []Segment
 		last := 0
 		for _, loc := range re.FindAllStringIndex(text, -1) {
+			if loc[0] == loc[1] {
+				continue
+			}
 			if loc[0] > last {
 				segs = append(segs, Segment{Text: text[last:loc[0]]})
 			}

@@ -31,6 +31,14 @@
     <input id="search" type="search" autocomplete="off" spellcheck="false"
            placeholder="Search verse text... e.g. love b:john t:all" title="Search (Ctrl+S)">
   </label>
+  <label class="field" title="Search for a regular expression; uncheck to search for the literal text">
+    <input id="regex" type="checkbox" checked>
+    <span>Regex</span>
+  </label>
+  <label class="field" title="Ignore case when searching">
+    <input id="icase" type="checkbox">
+    <span>Ignore case</span>
+  </label>
   <div class="actions">
     <button id="help" type="button" title="Keyboard shortcuts">?</button>
     <button id="quit" type="button" title="Stop the viewer (Alt+Q)">Quit</button>

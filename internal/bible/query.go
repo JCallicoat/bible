@@ -1,8 +1,10 @@
 package bible
 
 import (
+	"errors"
 	"fmt"
-	"strings"
+	"regexp"
+	"regexp/syntax"
 )
 
 // Verse is one row of output.
@@ -87,10 +89,27 @@ func (s *Store) Lookup(tables []string, bookInput string, ref Reference) ([]Vers
 	return out, msgs, nil
 }
 
-// Search finds verses containing term (ASCII case-insensitive, as SQLite's
-// LIKE) in one or more tables, optionally limited to a book, which is
-// resolved per table the same way as in Lookup.
-func (s *Store) Search(tables []string, term, bookInput string) ([]Verse, []string, error) {
+// SearchPattern compiles a search term into the pattern Search matches.
+// The term is a Go regular expression unless fixed is set, in which case
+// it matches literally. Matching is case-sensitive unless ignoreCase is set.
+func SearchPattern(term string, fixed, ignoreCase bool) (*regexp.Regexp, error) {
+	if fixed {
+		term = regexp.QuoteMeta(term)
+	}
+	if ignoreCase {
+		term = "(?i)" + term
+	}
+	re, err := regexp.Compile(term)
+	if se := (*syntax.Error)(nil); errors.As(err, &se) {
+		return nil, fmt.Errorf("invalid regular expression: %s: `%s`", se.Code, se.Expr)
+	}
+	return re, err
+}
+
+// Search finds verses whose text matches re (see SearchPattern) in one or
+// more tables, optionally limited to a book, which is resolved per table
+// the same way as in Lookup.
+func (s *Store) Search(tables []string, re *regexp.Regexp, bookInput string) ([]Verse, []string, error) {
 	var out []Verse
 	var msgs []string
 	resolvedAny := false
@@ -112,8 +131,8 @@ func (s *Store) Search(tables []string, term, bookInput string) ([]Verse, []stri
 		resolvedAny = true
 
 		q := "SELECT book, chapter, verse, text FROM " + QuoteIdent(t) +
-			` WHERE text LIKE ? ESCAPE '\'`
-		args := []any{"%" + escapeLike(term) + "%"}
+			" WHERE text REGEXP ?"
+		args := []any{re.String()}
 		if book != "" {
 			q += " AND book = ?"
 			args = append(args, book)
@@ -141,12 +160,6 @@ func (s *Store) Search(tables []string, term, bookInput string) ([]Verse, []stri
 		msgs = append(msgs, fmt.Sprintf("No book matches “%s” in any translation.", bookInput))
 	}
 	return out, msgs, nil
-}
-
-// escapeLike makes %, _ and \ match literally in a LIKE ... ESCAPE '\'
-// pattern.
-func escapeLike(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 // TablesFor applies a "t:" filter on top of the base translation selection.

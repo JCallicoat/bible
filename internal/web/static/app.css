@@ -64,6 +64,7 @@ select, input, button {
 }
 select { max-width: 14em; }
 button { cursor: pointer; padding: 4px 10px; }
+input[type="checkbox"] { margin: 0; padding: 0; accent-color: var(--accent); }
 button:hover { border-color: var(--muted); }
 select:focus-visible, input:focus-visible, button:focus-visible, #text:focus-visible {
   outline: 2px solid var(--accent);

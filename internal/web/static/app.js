@@ -10,6 +10,8 @@ const bookSel = $("book");
 const chapterSel = $("chapter");
 const lookupEdit = $("lookup");
 const searchEdit = $("search");
+const regexBox = $("regex");
+const icaseBox = $("icase");
 const textView = $("text");
 
 // Books (with chapter lists) of the translation currently in tSel.
@@ -181,7 +183,10 @@ function doLookup() {
 function doSearch() {
   const q = searchEdit.value.trim();
   if (!tSel.value || !q) return;
-  display(() => api("/api/search", { t: tSel.value, q }));
+  const params = { t: tSel.value, q };
+  if (!regexBox.checked) params.fixed = "1";
+  if (icaseBox.checked) params.icase = "1";
+  display(() => api("/api/search", params));
 }
 
 async function onTranslationChanged() {
@@ -285,6 +290,11 @@ document.addEventListener("keydown", (e) => {
 lookupEdit.addEventListener("keydown", (e) => {
   if (e.key === "Enter") doLookup();
 });
+for (const box of [regexBox, icaseBox]) {
+  box.addEventListener("change", () => {
+    if (searchEdit.value.trim() !== "") doSearch();
+  });
+}
 searchEdit.addEventListener("keydown", (e) => {
   if (e.key === "Enter") doSearch();
 });

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -22,6 +23,9 @@ type runner struct {
 	stderr io.Writer
 	lines  bool // one verse per line instead of paragraphs
 	color  bool // emit ANSI bold escapes
+
+	fixed      bool // search for the literal text instead of a regexp
+	ignoreCase bool // case-insensitive search
 }
 
 // Main runs the CLI with args (without the program name) and returns the
@@ -34,8 +38,11 @@ func Main(args []string, stdout, stderr io.Writer, open bible.Opener) int {
 		"The translation code (e.g., NET, KJV). Use commas for multiple, or 'all' for\n"+
 			"all translations. Can be overridden by an embedded t:<name> or t:all filter.")
 	search := fs.StringP("search", "s", "",
-		"Search translations for words. Supports 'b:<book>' and 't:<translation>'\n"+
-			"(or 't:all') filters anywhere in the text, e.g. -s \"faith b:romans t:kjv\".")
+		"Search translations for a regular expression. Supports 'b:<book>' and\n"+
+			"'t:<translation>' (or 't:all') filters anywhere in the text, e.g.\n"+
+			"-s \"faith b:romans t:kjv\".")
+	fixed := fs.BoolP("fixed-strings", "f", false, "Search for the literal text instead of a regular expression")
+	ignoreCase := fs.BoolP("ignore-case", "i", false, "Ignore case when searching")
 	lines := fs.BoolP("lines", "L", false, "Print one verse per line instead of grouping verses into paragraphs")
 	width := fs.IntP("wrap", "w", 0, "Wrap output lines at the last space before this column (0: no wrapping)")
 	dbPath := fs.String("db", "", "Use this database file instead of the embedded one")
@@ -70,7 +77,8 @@ func Main(args []string, stdout, stderr io.Writer, open bible.Opener) int {
 		defer ww.Flush() // before out.Flush
 		w = ww
 	}
-	r := &runner{store: store, stdout: w, stderr: stderr, lines: *lines, color: useColor(stdout)}
+	r := &runner{store: store, stdout: w, stderr: stderr, lines: *lines, color: useColor(stdout),
+		fixed: *fixed, ignoreCase: *ignoreCase}
 	stdout = w
 
 	if *list {
@@ -193,7 +201,7 @@ func (r *runner) lookup(base []string, raw string) int {
 	if !multi {
 		fmt.Fprintf(r.stdout, "%s\n\n", r.bold(strings.ToUpper(tables[0])))
 	}
-	r.printRows(rows, multi, "")
+	r.printRows(rows, multi, nil)
 	return 0
 }
 
@@ -205,13 +213,19 @@ func (r *runner) search(base []string, raw string) int {
 		return 1
 	}
 
+	re, err := bible.SearchPattern(term, r.fixed, r.ignoreCase)
+	if err != nil {
+		fmt.Fprintf(r.stderr, "Error: %v (use -f to search for the literal text)\n", err)
+		return 1
+	}
+
 	tables, msg := r.store.TablesFor(base, f)
 	if msg != "" {
 		r.errors([]string{msg})
 		return 1
 	}
 
-	rows, msgs, err := r.store.Search(tables, term, f.Book)
+	rows, msgs, err := r.store.Search(tables, re, f.Book)
 	if err != nil {
 		return r.fail(err)
 	}
@@ -231,7 +245,7 @@ func (r *runner) search(base []string, raw string) int {
 		fmt.Fprint(r.stdout, "No results found.\n\n")
 		return 0
 	}
-	r.printRows(rows, multi, term)
+	r.printRows(rows, multi, re)
 	fmt.Fprintln(r.stdout)
 	return 0
 }
@@ -239,12 +253,13 @@ func (r *runner) search(base []string, raw string) int {
 // printRows prints one paragraph per line: the first verse with its full
 // reference and any continuing verses (see bible.Store.MarkParagraphs)
 // after it as "(N) text". Translation names, references and verse numbers
-// are bold, as are any case-insensitive matches of term in the text.
-func (r *runner) printRows(rows []bible.Verse, multi bool, term string) {
+// are bold, as are any matches of re (if not nil) in the text.
+func (r *runner) printRows(rows []bible.Verse, multi bool, re *regexp.Regexp) {
+	hl := r.highlighter(re)
 	last := ""
 	for i, v := range rows {
 		if v.Cont {
-			fmt.Fprintf(r.stdout, " (%s) %s", r.bold(fmt.Sprint(v.Verse)), r.highlight(v.Text, term))
+			fmt.Fprintf(r.stdout, " (%s) %s", r.bold(fmt.Sprint(v.Verse)), hl(v.Text))
 			continue
 		}
 		if i > 0 {
@@ -261,7 +276,7 @@ func (r *runner) printRows(rows []bible.Verse, multi bool, term string) {
 			prefix = r.bold(strings.ToUpper(v.Translation)) + " "
 		}
 		ref := r.bold(fmt.Sprintf("%s %d:%d", v.Book, v.Chapter, v.Verse))
-		fmt.Fprintf(r.stdout, "%s%s %s", prefix, ref, r.highlight(v.Text, term))
+		fmt.Fprintf(r.stdout, "%s%s %s", prefix, ref, hl(v.Text))
 	}
 	if len(rows) > 0 {
 		fmt.Fprintln(r.stdout)
@@ -294,37 +309,24 @@ func (r *runner) bold(s string) string {
 	return ansiBold + s + ansiReset
 }
 
-// highlight bolds every occurrence of term in text, matching ASCII
-// case-insensitively like the LIKE query in bible.Store.Search.
-func (r *runner) highlight(text, term string) string {
-	if term == "" || !r.color {
-		return text
+// highlighter returns a function that bolds the matches of re in a verse,
+// or leaves it unchanged if re is nil.
+func (r *runner) highlighter(re *regexp.Regexp) func(text string) string {
+	if re == nil || !r.color {
+		return func(text string) string { return text }
 	}
-	lowerText, lowerTerm := asciiLower(text), asciiLower(term)
-	var b strings.Builder
-	for {
-		i := strings.Index(lowerText, lowerTerm)
-		if i < 0 {
-			break
+	segments := bible.Highlighter(re)
+	return func(text string) string {
+		var b strings.Builder
+		for _, seg := range segments(text) {
+			if seg.Highlight {
+				b.WriteString(r.bold(seg.Text))
+			} else {
+				b.WriteString(seg.Text)
+			}
 		}
-		end := i + len(term)
-		b.WriteString(text[:i])
-		b.WriteString(r.bold(text[i:end]))
-		text, lowerText = text[end:], lowerText[end:]
+		return b.String()
 	}
-	b.WriteString(text)
-	return b.String()
-}
-
-// asciiLower lowercases only A-Z, so byte offsets stay aligned with s.
-func asciiLower(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			b[i] = c + 'a' - 'A'
-		}
-	}
-	return string(b)
 }
 
 // wrapWriter breaks each line it writes at the last space before column

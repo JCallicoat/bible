@@ -12,7 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/ncruces/go-sqlite3/driver"
+	sqlregexp "github.com/ncruces/go-sqlite3/ext/regexp"
 	"github.com/ncruces/go-sqlite3/util/ioutil"
 	"github.com/ncruces/go-sqlite3/vfs/readervfs"
 )
@@ -53,7 +54,7 @@ type Opener func(path string) (*Store, error)
 func OpenEmbedded(data string) (*Store, error) {
 	const name = "bible.db"
 	readervfs.Create(name, ioutil.NewSizeReaderAt(strings.NewReader(data)))
-	db, err := sql.Open("sqlite3", "file:"+name+"?vfs=reader")
+	db, err := driver.Open("file:"+name+"?vfs=reader", sqlregexp.Register)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +65,7 @@ func OpenEmbedded(data string) (*Store, error) {
 // override, e.g. to try a new bible.db without rebuilding.
 func OpenFile(path string) (*Store, error) {
 	u := url.URL{Scheme: "file", OmitHost: true, Path: path, RawQuery: "mode=ro"}
-	db, err := sql.Open("sqlite3", u.String())
+	db, err := driver.Open(u.String(), sqlregexp.Register)
 	if err != nil {
 		return nil, err
 	}

@@ -198,7 +198,8 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := s.search(current, r.URL.Query().Get("q"))
+	q := r.URL.Query()
+	res, err := s.search(current, q.Get("q"), q.Get("fixed") == "1", q.Get("icase") == "1")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -206,18 +207,24 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, res)
 }
 
-func (s *server) search(current, raw string) (Result, error) {
+// search runs a regular expression search, or a literal one if fixed is
+// set, ignoring case if ignoreCase is set (the CLI's -f and -i).
+func (s *server) search(current, raw string, fixed, ignoreCase bool) (Result, error) {
 	f := bible.ExtractFilters(strings.TrimSpace(raw))
 	term := f.Remainder
 	if term == "" {
 		return Result{Message: "Enter search text in addition to the filter(s)."}, nil
+	}
+	re, err := bible.SearchPattern(term, fixed, ignoreCase)
+	if err != nil {
+		return Result{Message: err.Error() + "."}, nil
 	}
 	tables, msg := s.store.TablesFor([]string{current}, f)
 	if msg != "" {
 		return Result{Message: msg}, nil
 	}
 
-	vs, msgs, err := s.store.Search(tables, term, f.Book)
+	vs, msgs, err := s.store.Search(tables, re, f.Book)
 	if err != nil {
 		return Result{}, err
 	}
@@ -232,7 +239,7 @@ func (s *server) search(current, raw string) (Result, error) {
 		return Result{Message: "No results for " + desc + "."}, nil
 	}
 
-	hl := bible.Highlighter(term)
+	hl := bible.Highlighter(re)
 	rows := make([]Row, len(vs))
 	for i, v := range vs {
 		rows[i] = Row{Translation: v.Translation, Book: v.Book, Chapter: v.Chapter,

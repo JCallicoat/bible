@@ -54,7 +54,9 @@ bible [options] [book [chapter[:verse[-verse]]] [filters...]]
   -L, --lines                Print one verse per line instead of grouping verses into paragraphs
   -l, --list                 List available translations
   -t, --translation string   Translation code(s), comma separated, or "all" (default "NRSVUE")
-  -s, --search string        Search verse text
+  -s, --search string        Search verse text for a regular expression
+  -f, --fixed-strings        Search for the literal text instead of a regular expression
+  -i, --ignore-case          Ignore case when searching
   -w, --wrap int             Wrap output lines at the last space before this column (0: no wrapping)
 ```
 
@@ -74,6 +76,19 @@ Genesis 1:1 When God began to create the heavens and the earth, (2) the earth wa
 `-L` (or `--lines`) prints one verse per line instead, as does a database
 without paragraph data. Search results are always one verse per line.
 
+Searches use [Go regular expressions](https://pkg.go.dev/regexp/syntax)
+(RE2 syntax, so no backreferences or lookarounds) and are case-sensitive.
+`-i` (or `--ignore-case`) ignores case, and `-f` (or `--fixed-strings`)
+matches the text literally, for searching for characters like `.` or `(`.
+Filters are taken out first, so a pattern can't contain a word starting
+with `b:` or `t:`.
+
+```
+bible -s "love(th|s) b:1john t:kjv"   # "loveth" or "loves"
+bible -s "^In the beginning"          # at the start of a verse
+bible -i -f -s "lord."                # "lord." or "Lord.", literally
+```
+
 `-w N` (or `--wrap N`) wraps long lines for reading in a terminal: each
 line is broken at the last space before column N, so no line is N or more
 characters long unless a single word is. For example, `bible -w 80 gen 1`.
@@ -88,7 +103,9 @@ variable is set to a non-empty value.
 `bible gui` starts a small web server on 127.0.0.1 (on a free port) and
 opens the viewer in your default browser. It works like the Qt window:
 translation, book and chapter dropdowns, a lookup box, a search box and the
-text view.
+text view. Searches are case-sensitive regular expressions, like the
+command line; uncheck **Regex** to search for the literal text, and check
+**Ignore case** to ignore case.
 
 The server stops on its own about 3 seconds after you close the last tab
 showing it (reloading the page is fine), or when you click **Quit**. If no
@@ -170,8 +187,11 @@ make paragraphs EMBED_FLAGS="--embed-cache /tmp/kjv.emb --avg-verses 8"
 
 ## Differences from the Python version
 
-- `%` and `_` in book names and search text match literally; Python
-  treated them as SQL wildcards.
+- `%` and `_` in book names match literally; Python treated them as SQL
+  wildcards.
+- Searches use regular expressions and are case-sensitive by default;
+  Python matched the text literally, ignoring ASCII case. `-f` and `-i`
+  restore that behaviour.
 - After a lookup with `t:<translation>`, the book dropdown now lists that
   translation's books; the Qt version kept the previous translation's list.
 - The database location is no longer a command-line argument. A hidden
