@@ -55,6 +55,7 @@ bible [options] [book [chapter[:verse[-verse]]] [filters...]]
   -l, --list                 List available translations
   -t, --translation string   Translation code(s), comma separated, or "all" (default "NRSVUE")
   -s, --search string        Search verse text
+  -w, --wrap int             Wrap output lines at the last space before this column (0: no wrapping)
 ```
 
 With no arguments it prints Genesis 1. Books can be abbreviated to any
@@ -72,6 +73,10 @@ Genesis 1:1 When God began to create the heavens and the earth, (2) the earth wa
 
 `-L` (or `--lines`) prints one verse per line instead, as does a database
 without paragraph data. Search results are always one verse per line.
+
+`-w N` (or `--wrap N`) wraps long lines for reading in a terminal: each
+line is broken at the last space before column N, so no line is N or more
+characters long unless a single word is. For example, `bible -w 80 gen 1`.
 
 Translation names, references and verse numbers are printed in bold, as are
 matches of the search text in search results. Bold is used only when

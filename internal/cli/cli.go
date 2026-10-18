@@ -3,11 +3,13 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/pflag"
 
@@ -35,6 +37,7 @@ func Main(args []string, stdout, stderr io.Writer, open bible.Opener) int {
 		"Search translations for words. Supports 'b:<book>' and 't:<translation>'\n"+
 			"(or 't:all') filters anywhere in the text, e.g. -s \"faith b:romans t:kjv\".")
 	lines := fs.BoolP("lines", "L", false, "Print one verse per line instead of grouping verses into paragraphs")
+	width := fs.IntP("wrap", "w", 0, "Wrap output lines at the last space before this column (0: no wrapping)")
 	dbPath := fs.String("db", "", "Use this database file instead of the embedded one")
 	_ = fs.MarkHidden("db")
 	fs.Usage = func() {
@@ -48,6 +51,10 @@ func Main(args []string, stdout, stderr io.Writer, open bible.Opener) int {
 		}
 		return 2
 	}
+	if *width < 0 {
+		fmt.Fprintln(stderr, "Error: --wrap must not be negative")
+		return 2
+	}
 
 	store, err := open(*dbPath)
 	if err != nil {
@@ -57,8 +64,14 @@ func Main(args []string, stdout, stderr io.Writer, open bible.Opener) int {
 	defer store.Close()
 	out := bufio.NewWriter(stdout)
 	defer out.Flush()
-	r := &runner{store: store, stdout: out, stderr: stderr, lines: *lines, color: useColor(stdout)}
-	stdout = out
+	var w io.Writer = out
+	if *width > 0 {
+		ww := &wrapWriter{w: out, width: *width}
+		defer ww.Flush() // before out.Flush
+		w = ww
+	}
+	r := &runner{store: store, stdout: w, stderr: stderr, lines: *lines, color: useColor(stdout)}
+	stdout = w
 
 	if *list {
 		fmt.Fprint(stdout, "Available translations:\n\n")
@@ -312,4 +325,74 @@ func asciiLower(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// wrapWriter breaks each line it writes at the last space before column
+// width, replacing that space with a newline. ANSI escape sequences don't
+// count toward the column, and a word longer than width is left whole.
+type wrapWriter struct {
+	w     io.Writer
+	width int
+	line  []byte // pending output not yet ended by a newline
+}
+
+func (ww *wrapWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	for len(p) > 0 {
+		i := bytes.IndexByte(p, '\n')
+		if i < 0 {
+			ww.line = append(ww.line, p...)
+			break
+		}
+		ww.line = append(ww.line, p[:i+1]...)
+		p = p[i+1:]
+		if err := ww.Flush(); err != nil {
+			return 0, err
+		}
+	}
+	return n, nil
+}
+
+// Flush wraps and writes any pending output.
+func (ww *wrapWriter) Flush() error {
+	if len(ww.line) == 0 {
+		return nil
+	}
+	wrapLine(ww.line, ww.width)
+	_, err := ww.w.Write(ww.line)
+	ww.line = ww.line[:0]
+	return err
+}
+
+// wrapLine wraps b in place so that no line reaches width columns where a
+// space allows breaking earlier.
+func wrapLine(b []byte, width int) {
+	col := 0 // visible characters on the current line
+	space, spaceCol := -1, 0
+	for i := 0; i < len(b); {
+		switch {
+		case b[i] == 0x1b && i+1 < len(b) && b[i+1] == '[':
+			// Skip a CSI sequence up to and including its final byte.
+			i += 2
+			for i < len(b) && (b[i] < 0x40 || b[i] > 0x7e) {
+				i++
+			}
+			i++
+			continue
+		case b[i] == '\n':
+			col, space = 0, -1
+			i++
+			continue
+		case b[i] == ' ':
+			space, spaceCol = i, col
+		}
+		_, size := utf8.DecodeRune(b[i:])
+		i += size
+		col++
+		if col >= width && space >= 0 {
+			b[space] = '\n'
+			col -= spaceCol + 1
+			space = -1
+		}
+	}
 }
