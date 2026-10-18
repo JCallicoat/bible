@@ -35,9 +35,12 @@ type Store struct {
 	db           *sql.DB
 	translations []string
 
-	mu        sync.Mutex
-	books     map[string][]Book   // keyed by table name, filled lazily
-	bookNames map[string][]string // keyed by table name, filled lazily
+	hasParagraphs bool
+
+	mu         sync.Mutex
+	books      map[string][]Book    // keyed by table name, filled lazily
+	bookNames  map[string][]string  // keyed by table name, filled lazily
+	paragraphs map[chapterKey][]int // paragraph starts, filled lazily
 }
 
 // Opener opens the Bible database: the embedded copy when path is "",
@@ -69,8 +72,12 @@ func OpenFile(path string) (*Store, error) {
 }
 
 func newStore(db *sql.DB) (*Store, error) {
-	s := &Store{db: db, books: map[string][]Book{}, bookNames: map[string][]string{}}
+	s := &Store{db: db, books: map[string][]Book{}, bookNames: map[string][]string{},
+		paragraphs: map[chapterKey][]int{}}
 	t, err := s.loadTranslations()
+	if err == nil {
+		s.hasParagraphs, err = s.loadHasParagraphs()
+	}
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("reading database: %w", err)

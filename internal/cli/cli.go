@@ -17,6 +17,7 @@ type runner struct {
 	store  *bible.Store
 	stdout io.Writer
 	stderr io.Writer
+	lines  bool // one verse per line instead of paragraphs
 }
 
 // Main runs the CLI with args (without the program name) and returns the
@@ -31,6 +32,7 @@ func Main(args []string, stdout, stderr io.Writer, open bible.Opener) int {
 	search := fs.StringP("search", "s", "",
 		"Search translations for words. Supports 'b:<book>' and 't:<translation>'\n"+
 			"(or 't:all') filters anywhere in the text, e.g. -s \"faith b:romans t:kjv\".")
+	lines := fs.BoolP("lines", "L", false, "Print one verse per line instead of grouping verses into paragraphs")
 	dbPath := fs.String("db", "", "Use this database file instead of the embedded one")
 	_ = fs.MarkHidden("db")
 	fs.Usage = func() {
@@ -53,7 +55,7 @@ func Main(args []string, stdout, stderr io.Writer, open bible.Opener) int {
 	defer store.Close()
 	out := bufio.NewWriter(stdout)
 	defer out.Flush()
-	r := &runner{store: store, stdout: out, stderr: stderr}
+	r := &runner{store: store, stdout: out, stderr: stderr, lines: *lines}
 	stdout = out
 
 	if *list {
@@ -101,7 +103,7 @@ func Main(args []string, stdout, stderr io.Writer, open bible.Opener) int {
 }
 
 const usageHeader = `Usage: bible [options] [book [chapter[:verse[-verse]]] [filters...]]
-       bible gui [--no-browser] [--port N]
+       bible gui [-L] [--no-browser] [--port N]
 
 Query Bible translations. With no reference, shows Genesis 1.
 
@@ -167,6 +169,11 @@ func (r *runner) lookup(base []string, raw string) int {
 		return 0
 	}
 
+	if !r.lines {
+		if err := r.store.MarkParagraphs(rows); err != nil {
+			return r.fail(err)
+		}
+	}
 	multi := len(tables) > 1
 	if !multi {
 		fmt.Fprintf(r.stdout, "%s\n\n", strings.ToUpper(tables[0]))
@@ -214,9 +221,19 @@ func (r *runner) search(base []string, raw string) int {
 	return 0
 }
 
+// printRows prints one paragraph per line: the first verse with its full
+// reference and any continuing verses (see bible.Store.MarkParagraphs)
+// after it as "(N) text".
 func (r *runner) printRows(rows []bible.Verse, multi bool) {
 	last := ""
 	for i, v := range rows {
+		if v.Cont {
+			fmt.Fprintf(r.stdout, " (%d) %s", v.Verse, v.Text)
+			continue
+		}
+		if i > 0 {
+			fmt.Fprintln(r.stdout)
+		}
 		if v.Translation != last {
 			last = v.Translation
 			if i > 0 {
@@ -227,6 +244,9 @@ func (r *runner) printRows(rows []bible.Verse, multi bool) {
 		if multi {
 			prefix = strings.ToUpper(v.Translation) + " "
 		}
-		fmt.Fprintf(r.stdout, "%s%s %d:%d %s\n", prefix, v.Book, v.Chapter, v.Verse, v.Text)
+		fmt.Fprintf(r.stdout, "%s%s %d:%d %s", prefix, v.Book, v.Chapter, v.Verse, v.Text)
+	}
+	if len(rows) > 0 {
+		fmt.Fprintln(r.stdout)
 	}
 }

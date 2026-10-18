@@ -12,6 +12,9 @@ type Verse struct {
 	Chapter     int    `json:"chapter"`
 	Verse       int    `json:"verse"`
 	Text        string `json:"text"`
+	// Cont is set by MarkParagraphs when this verse continues the
+	// previous verse's paragraph.
+	Cont bool `json:"cont,omitempty"`
 }
 
 // Chapter returns every verse of book chapter in table.

@@ -2,9 +2,16 @@ BINARY  := bible
 LDFLAGS := -s -w
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
+# Embeddings endpoint for "make paragraphs" (any OpenAI-compatible
+# /v1/embeddings server, e.g. llama-server --embeddings).
+EMBED_URL     ?= http://127.0.0.1:8080
+EMBED_MODEL   ?=
+EMBED_API_KEY ?=
+EMBED_FLAGS   ?=
+
 export CGO_ENABLED := 0
 
-.PHONY: build test parity release clean
+.PHONY: build build-paragraphs paragraphs test parity release clean
 
 build: data/bible.db
 	go build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) .
@@ -17,6 +24,16 @@ release: data/bible.db
 		GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags="$(LDFLAGS)" \
 			-o dist/$(BINARY)-$$os-$$arch$$ext . || exit 1; \
 	done
+
+# Optional: (re)generate the paragraphs table in data/bible.db from KJV
+# embeddings. embed-paragraphs vacuums the database when it is done.
+paragraphs: data/bible.db
+	go run . embed-paragraphs --db data/bible.db --embed-url "$(EMBED_URL)" \
+		--embed-model "$(EMBED_MODEL)" --embed-api-key "$(EMBED_API_KEY)" $(EMBED_FLAGS)
+
+build-paragraphs:
+	$(MAKE) paragraphs
+	$(MAKE) build
 
 data/bible.db:
 	@echo "data/bible.db is missing: copy your bible.db there first." >&2

@@ -46,6 +46,7 @@ const (
 type server struct {
 	store *bible.Store
 	addr  string // host:port the browser should use
+	lines bool   // one verse per line instead of paragraphs
 
 	grace time.Duration
 
@@ -63,10 +64,11 @@ func Main(args []string, stderr io.Writer, open bible.Opener) int {
 	fset.SetOutput(stderr)
 	noBrowser := fset.Bool("no-browser", false, "Don't open a browser; just print the URL (and don't exit if no tab connects)")
 	port := fset.Int("port", 0, "Port to listen on (default: any free port)")
+	lines := fset.BoolP("lines", "L", false, "Show one verse per line instead of grouping verses into paragraphs")
 	dbPath := fset.String("db", "", "Use this database file instead of the embedded one")
 	_ = fset.MarkHidden("db")
 	fset.Usage = func() {
-		fmt.Fprint(stderr, "Usage: bible gui [--no-browser] [--port N]\n\n"+
+		fmt.Fprint(stderr, "Usage: bible gui [-L] [--no-browser] [--port N]\n\n"+
 			"Opens the Bible viewer in your web browser. The viewer exits\n"+
 			"when its last browser tab is closed.\n\nOptions:\n")
 		fset.PrintDefaults()
@@ -97,6 +99,7 @@ func Main(args []string, stderr io.Writer, open bible.Opener) int {
 	s := &server{
 		store: store,
 		addr:  ln.Addr().String(),
+		lines: *lines,
 		grace: graceDefault,
 		quit:  make(chan struct{}),
 	}

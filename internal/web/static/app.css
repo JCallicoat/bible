@@ -81,6 +81,8 @@ select:focus-visible, input:focus-visible, button:focus-visible, #text:focus-vis
 #text p { margin: 0; }
 #text .gap { height: 1.55em; }
 #text .ref { font-weight: 700; }
+#text.paras p { margin-bottom: 0.5em; }
+#text .num { color: var(--muted); }
 #text b.hit { font-weight: 700; background: var(--mark); border-radius: 2px; }
 #text .msg { white-space: pre-wrap; }
 

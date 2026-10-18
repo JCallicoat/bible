@@ -11,7 +11,8 @@ import (
 )
 
 // Row is a verse as sent to the browser. Search results carry Segments
-// (the text split around matches) instead of Text.
+// (the text split around matches) instead of Text. Cont marks a verse that
+// continues the previous row's paragraph.
 type Row struct {
 	Translation string          `json:"translation"`
 	Book        string          `json:"book"`
@@ -19,6 +20,7 @@ type Row struct {
 	Verse       int             `json:"verse"`
 	Text        string          `json:"text,omitempty"`
 	Segments    []bible.Segment `json:"segments,omitempty"`
+	Cont        bool            `json:"cont,omitempty"`
 }
 
 // Sync tells the browser which translation/book/chapter the dropdowns
@@ -47,12 +49,22 @@ func writeJSON(w http.ResponseWriter, v any) {
 func toRows(vs []bible.Verse) []Row {
 	rows := make([]Row, len(vs))
 	for i, v := range vs {
-		rows[i] = Row{v.Translation, v.Book, v.Chapter, v.Verse, v.Text, nil}
+		rows[i] = Row{Translation: v.Translation, Book: v.Book, Chapter: v.Chapter,
+			Verse: v.Verse, Text: v.Text, Cont: v.Cont}
 	}
 	return rows
 }
 
 // table validates the "t" query parameter against the translation list.
+// paragraphs groups vs into paragraphs unless the viewer was started
+// with -L.
+func (s *server) paragraphs(vs []bible.Verse) error {
+	if s.lines {
+		return nil
+	}
+	return s.store.MarkParagraphs(vs)
+}
+
 func (s *server) table(w http.ResponseWriter, r *http.Request) (string, bool) {
 	t := r.URL.Query().Get("t")
 	for _, name := range s.store.Translations() {
@@ -103,6 +115,9 @@ func (s *server) handleChapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vs, err := s.store.Chapter(t, r.URL.Query().Get("b"), c)
+	if err == nil {
+		err = s.paragraphs(vs)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -159,6 +174,9 @@ func (s *server) lookup(current, raw string) (Result, error) {
 	}
 
 	vs, msgs, err := s.store.Lookup(tables, bookInput, ref)
+	if err == nil {
+		err = s.paragraphs(vs)
+	}
 	if err != nil {
 		return Result{}, err
 	}
@@ -217,7 +235,8 @@ func (s *server) search(current, raw string) (Result, error) {
 	hl := bible.Highlighter(term)
 	rows := make([]Row, len(vs))
 	for i, v := range vs {
-		rows[i] = Row{v.Translation, v.Book, v.Chapter, v.Verse, "", hl(v.Text)}
+		rows[i] = Row{Translation: v.Translation, Book: v.Book, Chapter: v.Chapter,
+			Verse: v.Verse, Segments: hl(v.Text)}
 	}
 	return Result{Rows: rows, Multi: f.TranslationAll}, nil
 }

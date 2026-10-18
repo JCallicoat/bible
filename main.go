@@ -9,6 +9,7 @@ import (
 	"github.com/jcallicoat/bible/data"
 	"github.com/jcallicoat/bible/internal/bible"
 	"github.com/jcallicoat/bible/internal/cli"
+	"github.com/jcallicoat/bible/internal/paragraphs"
 	"github.com/jcallicoat/bible/internal/web"
 )
 
@@ -21,8 +22,14 @@ func openStore(path string) (*bible.Store, error) {
 
 func main() {
 	args := os.Args[1:]
-	if len(args) > 0 && args[0] == "gui" {
-		os.Exit(web.Main(args[1:], os.Stderr, openStore))
+	if len(args) > 0 {
+		switch args[0] {
+		case "gui":
+			os.Exit(web.Main(args[1:], os.Stderr, openStore))
+		case "embed-paragraphs":
+			// Build-time tool, deliberately left out of the help.
+			os.Exit(paragraphs.Main(args[1:], os.Stderr))
+		}
 	}
 	os.Exit(cli.Main(args, os.Stdout, os.Stderr, openStore))
 }

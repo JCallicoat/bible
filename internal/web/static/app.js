@@ -68,6 +68,23 @@ function showError(err) {
   showMessage(`Error: ${err.message || err}`);
 }
 
+function appendText(p, row) {
+  if (!row.segments) {
+    p.append(row.text);
+    return;
+  }
+  for (const seg of row.segments) {
+    if (seg.hl) {
+      const b = document.createElement("b");
+      b.className = "hit";
+      b.textContent = seg.text;
+      p.append(b);
+    } else {
+      p.append(seg.text);
+    }
+  }
+}
+
 function render(result) {
   if (result.message) {
     showMessage(result.message);
@@ -75,7 +92,17 @@ function render(result) {
   }
   const frag = document.createDocumentFragment();
   let lastTrans = null;
+  let p = null;
   result.rows.forEach((row, i) => {
+    // A verse continuing a paragraph goes on the same line as "(N) text".
+    if (row.cont && p) {
+      const num = document.createElement("span");
+      num.className = "num";
+      num.textContent = `(${row.verse})`;
+      p.append(" ", num, " ");
+      appendText(p, row);
+      return;
+    }
     if (row.translation !== lastTrans) {
       lastTrans = row.translation;
       if (i > 0) {
@@ -84,28 +111,16 @@ function render(result) {
         frag.append(gap);
       }
     }
-    const p = document.createElement("p");
+    p = document.createElement("p");
     const ref = document.createElement("span");
     ref.className = "ref";
     const prefix = result.multi ? row.translation.toUpperCase() + " " : "";
     ref.textContent = `${prefix}${row.book} ${row.chapter}:${row.verse}`;
     p.append(ref, " ");
-    if (row.segments) {
-      for (const seg of row.segments) {
-        if (seg.hl) {
-          const b = document.createElement("b");
-          b.className = "hit";
-          b.textContent = seg.text;
-          p.append(b);
-        } else {
-          p.append(seg.text);
-        }
-      }
-    } else {
-      p.append(row.text);
-    }
+    appendText(p, row);
     frag.append(p);
   });
+  textView.classList.toggle("paras", result.rows.some((row) => row.cont));
   textView.replaceChildren(frag);
   textView.scrollTop = 0;
 }
