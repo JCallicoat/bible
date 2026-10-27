@@ -229,8 +229,8 @@ func (r *runner) search(base []string, raw string) int {
 	return 0
 }
 
-// printRows prints one paragraph per line: the first verse with its full
-// reference and any continuing verses (see bible.Store.MarkParagraphs)
+// printRows prints one paragraph per line: the first verse with the
+// paragraph's full reference (e.g. "Matthew 5:3-6") and any continuing verses (see bible.Store.MarkParagraphs)
 // after it as "(N) text". Translation names, references and verse numbers
 // are bold, as are any matches of re (if not nil) in the text.
 func (r *runner) printRows(rows []bible.Verse, multi bool, re *regexp.Regexp) {
@@ -252,12 +252,24 @@ func (r *runner) printRows(rows []bible.Verse, multi bool, re *regexp.Regexp) {
 		if multi {
 			prefix = r.bold(strings.ToUpper(v.Translation)) + " "
 		}
-		ref := r.bold(fmt.Sprintf("%s %d:%d", v.Book, v.Chapter, v.Verse))
-		fmt.Fprintf(r.stdout, "%s%s %s", prefix, ref, hl(v.Text))
+		ref := fmt.Sprintf("%s %d:%d", v.Book, v.Chapter, v.Verse)
+		if last := paragraphEnd(rows, i); last != v.Verse {
+			ref += fmt.Sprintf("-%d", last)
+		}
+		fmt.Fprintf(r.stdout, "%s%s %s", prefix, r.bold(ref), hl(v.Text))
 	}
 	if len(rows) > 0 {
 		fmt.Fprintln(r.stdout)
 	}
+}
+
+// paragraphEnd returns the verse number of the last verse in the paragraph
+// starting at rows[i].
+func paragraphEnd(rows []bible.Verse, i int) int {
+	for i+1 < len(rows) && rows[i+1].Cont {
+		i++
+	}
+	return rows[i].Verse
 }
 
 const (

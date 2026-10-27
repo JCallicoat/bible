@@ -117,7 +117,12 @@ function render(result) {
     const ref = document.createElement("span");
     ref.className = "ref";
     const prefix = result.multi ? row.translation.toUpperCase() + " " : "";
-    ref.textContent = `${prefix}${row.book} ${row.chapter}:${row.verse}`;
+    // Label the paragraph with its full verse range, e.g. "Matthew 5:3-6".
+    let j = i;
+    while (j + 1 < result.rows.length && result.rows[j + 1].cont) j++;
+    const last = result.rows[j].verse;
+    const range = last !== row.verse ? `${row.verse}-${last}` : `${row.verse}`;
+    ref.textContent = `${prefix}${row.book} ${row.chapter}:${range}`;
     p.append(ref, " ");
     appendText(p, row);
     frag.append(p);

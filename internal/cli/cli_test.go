@@ -40,8 +40,8 @@ func TestMain(t *testing.T) {
 		{
 			name: "default is Genesis 1 in paragraphs",
 			stdout: "NRSVUE\n\n" +
-				"Genesis 1:1 In the beginning there was faith. (2) The second verse.\n" +
-				"Genesis 1:3 The third verse. (4) Faith begins the fourth verse. (5) The fifth verse.\n",
+				"Genesis 1:1-2 In the beginning there was faith. (2) The second verse.\n" +
+				"Genesis 1:3-5 The third verse. (4) Faith begins the fourth verse. (5) The fifth verse.\n",
 		},
 		{
 			name:   "separate arguments",
@@ -61,7 +61,7 @@ func TestMain(t *testing.T) {
 		{
 			name:   "translation filter in a quoted argument",
 			args:   []string{"gen 1:1–2 t:kjv"},
-			stdout: "KJV\n\nGenesis 1:1 KJV beginning with faith. (2) KJV second.\n",
+			stdout: "KJV\n\nGenesis 1:1-2 KJV beginning with faith. (2) KJV second.\n",
 		},
 		{
 			name:   "lines",
